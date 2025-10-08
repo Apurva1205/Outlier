@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Outlier Detector — Single HTML Demo</title>
+  <style>
+    :root { --bg:#f7f7fb; --card:#ffffff; --fg:#111827; --muted:#6b7280; --brand:#4f46e5; --danger:#ef4444; --line:#e5e7eb; }
+    *{box-sizing:border-box} body{margin:0;font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;background:var(--bg);color:var(--fg)}
+    .wrap{max-width:1100px;margin:0 auto;padding:28px 16px}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:18px}
+    h1{font-size:22px;margin:0;font-weight:700}
+    .muted{color:var(--muted)}
+    .btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:#fff;padding:8px 12px;border-radius:14px;cursor:pointer}
+    .btn:hover{background:#fafafa}
+    .grid{display:grid;gap:12px}
+    .g-3{grid-template-columns:repeat(3,1fr)}
+    @media (max-width:820px){ .g-3{grid-template-columns:1fr} }
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 1px 2px rgba(0,0,0,.04);padding:14px}
+    .stat .label{font-size:12px;color:var(--muted)} .stat .value{font-size:22px;font-weight:600}
+    .section-title{font-size:16px;font-weight:600;margin:0 0 10px}
+    .controls{display:flex;align-items:center;gap:14px}
+    .chart-box{height:340px}
+    svg{width:100%;height:100%}
+    .legend{display:flex;gap:16px;align-items:center}
+    .dot{width:10px;height:10px;border-radius:50%}
+    table{width:100%;border-collapse:collapse}
+    th, td{padding:6px 6px;text-align:left;font-size:13px}
+    thead th{color:var(--muted);font-weight:500;border-bottom:1px solid var(--line)}
+    tbody tr{border-bottom:1px solid var(--line)}
+    footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px}
+    code{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;padding:0 4px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Outlier Detector — Simple Demo (HTML)</h1>
+        <div class="muted">Robust z‑scores via Median & MAD, no libraries required.</div>
+      </div>
+      <button id="regenBtn" class="btn" title="Regenerate data">🔁 Regenerate</button>
+    </header>
+
+    <section class="grid g-3">
+      <div class="card stat"><div class="label">Median</div><div class="value" id="medianVal">—</div></div>
+      <div class="card stat"><div class="label">MAD (×1.4826 ≈ σ)</div><div class="value"><span id="madVal">—</span> (<span id="madScaledVal">—</span>)</div></div>
+      <div class="card stat"><div class="label">Flagged</div><div class="value" id="flaggedVal">—</div></div>
+    </section>
+
+    <section class="card" style="margin-top:12px">
+      <div class="section-title">Interactive chart</div>
+      <div class="controls" style="justify-content:space-between;margin-bottom:8px">
+        <div class="muted">Threshold |z| ≥ <b id="threshLabel">3.5</b></div>
+        <input type="range" id="thresh" min="2" max="6" step="0.1" value="3.5" />
+      </div>
+      <div class="chart-box">
+        <svg id="chart" viewBox="0 0 1000 360" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="legend" style="margin-top:8px">
+        <div class="dot" style="background:var(--brand)"></div><span class="muted">Clean</span>
+        <div class="dot" style="background:var(--danger)"></div><span class="muted">Flagged</span>
+      </div>
+    </section>
+
+    <section class="grid" style="grid-template-columns:1fr 1fr; gap:16px; margin-top:12px">
+      <div class="card">
+        <div class="section-title">Top flagged points</div>
+        <table>
+          <thead><tr><th style="width:64px">#</th><th>Value</th><th>|z|</th></tr></thead>
+          <tbody id="flagTable"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="section-title">How it works</div>
+        <ol style="margin:0 0 6px 18px">
+          <li><b>Generate data:</b> create a normal‑ish series around 50 and inject a few obvious outliers.</li>
+          <li><b>Robust stats:</b> compute the <b>median</b> and <b>MAD</b> (median absolute deviation).</li>
+          <li><b>Score each point:</b> robust z‑score <code>(x − median) / (1.4826 × MAD)</code>.</li>
+          <li><b>Flag:</b> if <code>|z|</code> ≥ threshold, mark as outlier (red). Adjust the slider to see the effect.</li>
+          <li><b>Scales up:</b> at big‑data scale, compute medians/quantiles with sketches (t‑digest/KLL) in Spark/Flink and apply the same rule.</li>
+        </ol>
+        <div class="muted">Tip: lower threshold → more flags; higher → only extreme points.</div>
+      </div>
+    </section>
+
+    <footer>Single‑file demo. Drop this as <code>index.html</code> into any GitHub Pages repo.</footer>
+  </div>
+
+  <script>
+    // ——— utilities ———
+    function median(arr){if(!arr.length) return 0; const a=[...arr].sort((x,y)=>x-y); const m=Math.floor(a.length/2); return a.length%2? a[m] : (a[m-1]+a[m])/2}
+    function mad(arr, med){if(!arr.length) return 0; const dev=arr.map(x=>Math.abs(x-med)); return median(dev)}
+    function robustZ(x, med, madVal){if(madVal===0) return 0; return (x-med)/(1.4826*madVal)}
+    function rng(seed){let s=seed%2147483647; if(s<=0) s+=2147483646; return ()=> (s=(s*16807)%2147483647)/2147483647}
+    function generate(n=320, seed=42){const R=rng(seed); const base=[]; for(let i=0;i<n;i++){const u=R()||1e-6, v=R()||1e-6; const z=Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); base.push(50+10*z)} const oi=[12,47,88,120,201,260]; oi.forEach((i,k)=>{if(i<base.length) base[i]= (k%2===0?130+10*k : -10-7*k)}); return base.map((x,i)=>({id:i+1, value:Math.round(x*100)/100}))}
+
+    // ——— rendering ———
+    const svg = document.getElementById('chart');
+    const medianEl = document.getElementById('medianVal');
+    const madEl = document.getElementById('madVal');
+    const madScaledEl = document.getElementById('madScaledVal');
+    const flaggedEl = document.getElementById('flaggedVal');
+    const flagTable = document.getElementById('flagTable');
+    const thresh = document.getElementById('thresh');
+    const threshLabel = document.getElementById('threshLabel');
+    const regenBtn = document.getElementById('regenBtn');
+
+    let seed=42, data=[], enriched=[];
+
+    function compute(){
+      const vals = data.map(d=>d.value);
+      const med = +(median(vals).toFixed(2));
+      const m = mad(vals, med);
+      const madScaled = +( (1.4826*m).toFixed(2) );
+      enriched = data.map(d=>{ const z = robustZ(d.value, med, m); return {...d, z, absZ: Math.abs(z), flag: Math.abs(z) >= parseFloat(thresh.value)} });
+      const flagged = enriched.filter(r=>r.flag);
+
+      // stats
+      medianEl.textContent = med;
+      madEl.textContent = m.toFixed(2);
+      madScaledEl.textContent = madScaled.toFixed(2);
+      flaggedEl.textContent = `${flagged.length} / ${enriched.length} (${(flagged.length/enriched.length*100).toFixed(1)}%)`;
+
+      // table
+      flagTable.innerHTML = flagged
+        .slice().sort((a,b)=>b.absZ-a.absZ).slice(0,12)
+        .map(r=>`<tr><td>${r.id}</td><td>${r.value}</td><td>${r.absZ.toFixed(2)}</td></tr>`)
+        .join('');
+
+      draw(enriched);
+    }
+
+    function draw(rows){
+      const width = 1000, height = 360, padL=40, padR=16, padT=16, padB=28;
+      const plotW = width - padL - padR, plotH = height - padT - padB;
+      const vMin = Math.min(...rows.map(r=>r.value)), vMax = Math.max(...rows.map(r=>r.value));
+      const x = d => padL + ( (d.id-1)/(rows.length-1) )*plotW;
+      const y = d => padT + ( (vMax - d.value)/(vMax - vMin || 1) )*plotH;
+
+      // grid & axes
+      const gridY = 5; const grid = [];
+      for(let i=0;i<=gridY;i++){ const gy = padT + (i/gridY)*plotH; const val = (vMax - i*(vMax-vMin)/gridY).toFixed(1); grid.push(`<line x1="${padL}" y1="${gy}" x2="${width-padR}" y2="${gy}" stroke="#e5e7eb"/> <text x="8" y="${gy+4}" font-size="11" fill="#6b7280">${val}</text>`); }
+      const axis = `<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${height-padB}" stroke="#9ca3af"/> <line x1="${padL}" y1="${height-padB}" x2="${width-padR}" y2="${height-padB}" stroke="#9ca3af"/>`;
+
+      const dotsClean = rows.filter(r=>!r.flag).map(r=>`<circle cx="${x(r)}" cy="${y(r)}" r="3.5" fill="${getComputedStyle(document.documentElement).getPropertyValue('--brand') || '#4f46e5'}" fill-opacity="0.85"/>`).join('');
+      const dotsFlag = rows.filter(r=> r.flag).map(r=>`<circle cx="${x(r)}" cy="${y(r)}" r="3.8" fill="${getComputedStyle(document.documentElement).getPropertyValue('--danger') || '#ef4444'}" fill-opacity="0.95"/>`).join('');
+
+      svg.innerHTML = grid.join('') + axis + dotsClean + dotsFlag;
+    }
+
+    function refresh(){ data = generate(320, seed); compute(); }
+
+    // interactions
+    thresh.addEventListener('input', ()=>{ threshLabel.textContent = parseFloat(thresh.value).toFixed(1); compute(); });
+    regenBtn.addEventListener('click', ()=>{ seed+=1; refresh(); });
+
+    // init
+    seed = 42; data = generate(320, seed); compute();
+  </script>
+</body>
+</html>
